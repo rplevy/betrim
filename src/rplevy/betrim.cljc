@@ -1,34 +1,24 @@
-(ns taoensso.timbre
-  "Simple, flexible logging for Clojure/Script. No XML."
-  {:author "Peter Taoussanis"}
-  #+clj
+(ns rplevy.betrim
+  "Simple(r), flexible logging for Clojure/Script. No XML."
+  {:author "Robert P. Levy"}
   (:require
-   [clojure.string     :as str]
-   [io.aviso.exception :as aviso-ex]
-   [taoensso.encore    :as enc :refer (compile-if have have? qb)]
-   [taoensso.timbre.appenders.core :as core-appenders])
-
-  #+cljs
-  (:require
-   [clojure.string  :as str]
-   [taoensso.encore :as enc :refer () :refer-macros (compile-if have have?)]
-   [taoensso.timbre.appenders.core :as core-appenders])
-
-  #+cljs
-  (:require-macros [taoensso.timbre :as timbre-macros :refer ()]))
-
-(if (vector? taoensso.encore/encore-version)
-  (enc/assert-min-encore-version [2 50 0]) ; For nested-merge fixes
-  (enc/assert-min-encore-version  2.50))
+   #?(:clj [clojure.core.memoize :as memo])
+   #?(:clj [clojure.edn :as edn])
+   [clojure.string :as str]
+   #?(:clj [io.aviso.exception :as aviso-ex])
+   [rplevy.betrim.utils :as ut]
+   [rplevy.betrim.appenders.core :as core-appenders])
+  #?(:cljs
+     (:require-macros [rplevy.betrim :as timbre-macros :refer ()])))
 
 ;;;; Config
 
-#+clj
-(def default-timestamp-opts
-  "Controls (:timestamp_ data)"
-  {:pattern     "yy-MM-dd HH:mm:ss" #_:iso8601
-   :locale      :jvm-default #_(java.util.Locale. "en")
-   :timezone    :utc         #_(java.util.TimeZone/getTimeZone "Europe/Amsterdam")})
+#?(:clj
+   (def default-timestamp-opts
+    "Controls (:timestamp_ data)"
+    {:pattern     "yy-MM-dd HH:mm:ss" #_:iso8601
+     :locale      :jvm-default
+     :timezone    :utc}))
 
 (declare stacktrace)
 (defn default-output-fn
@@ -39,8 +29,8 @@
    (let [{:keys [level ?err_ vargs_ msg_ ?ns-str hostname_
                  timestamp_ ?line]} data]
      (str
-       #+clj @timestamp_ #+clj " "
-       #+clj @hostname_  #+clj " "
+       #?(:clj @timestamp_) #?(:clj " ")
+       #?(:clj @hostname_)  #?(:clj " ")
        (str/upper-case (name level))  " "
        "[" (or ?ns-str "?") ":" (or ?line "?") "] - "
        (force msg_)
@@ -50,10 +40,10 @@
 
 ;;; Alias core appenders here for user convenience
 (declare default-err default-out)
-#+clj  (enc/defalias          core-appenders/println-appender)
-#+clj  (enc/defalias          core-appenders/spit-appender)
-#+cljs (def println-appender  core-appenders/println-appender)
-#+cljs (def console-appender  core-appenders/console-appender)
+#?(:clj  (ut/defalias          core-appenders/println-appender))
+#?(:clj  (ut/defalias          core-appenders/spit-appender))
+#?(:cljs (def println-appender  core-appenders/println-appender))
+#?(:cljs (def console-appender  core-appenders/console-appender))
 
 (def example-config
   "Example (+default) Timbre v4 config map.
@@ -88,7 +78,6 @@
                        ; (see `default-output-fn` for details)
 
       :context         ; *context* value at log time (see `with-context`)
-      :profile-stats   ; From `profile` macro
 
   MIDDLEWARE
     Middleware are simple (fn [data]) -> ?data fns (applied left->right) that
@@ -107,42 +96,31 @@
 
    :middleware [] ; (fns [data]) -> ?data, applied left->right
 
-   #+clj :timestamp-opts
-   #+clj default-timestamp-opts ; {:pattern _ :locale _ :timezone _}
+   #?(:clj :timestamp-opts)
+   #?(:clj default-timestamp-opts)
 
-   :output-fn default-output-fn ; (fn [data]) -> string
+   :output-fn default-output-fn
 
    :appenders
-   #+clj
-   {:println (println-appender {:stream :auto})
-    ;; :spit (spit-appender {:fname "./timbre-spit.log"})
-    }
+   #?(:clj {:println (println-appender {:stream :auto})})
 
-   #+cljs
-   {;; :println (println-appender {})
-    :console (console-appender {})}})
+   #?(:cljs {:console (console-appender {})})})
 
-(comment
-  (set-config! example-config)
-  (infof "Hello %s" "world :-)"))
-
-(enc/defonce* ^:dynamic *config* "See `example-config` for info." example-config)
+(defonce ^:dynamic *config* example-config)
 (defmacro with-config        [config & body] `(binding [*config* ~config] ~@body))
 (defmacro with-merged-config [config & body]
-  `(binding [*config* (enc/nested-merge *config* ~config)] ~@body))
+  `(binding [*config* (ut/nested-merge *config* ~config)] ~@body))
 
 (defn swap-config! [f & args]
-  #+cljs (set!                   *config* (apply f *config* args))
-  #+clj  (apply alter-var-root #'*config* f args))
+  #?(:cljs (set! *config* (apply f *config* args)))
+  #?(:clj  (apply alter-var-root #'*config* f args)))
 
 (defn   set-config! [m] (swap-config! (fn [_old] m)))
-(defn merge-config! [m] (swap-config! (fn [old] (enc/nested-merge old m))))
+(defn merge-config! [m] (swap-config! (fn [old] (ut/nested-merge old m))))
 
 (defn     set-level! [level] (swap-config! (fn [m] (merge m {:level level}))))
 (defmacro with-level [level & body]
   `(binding [*config* (merge *config* {:level ~level})] ~@body))
-
-(comment (set-level! :info) *config*)
 
 ;;;; Levels
 
@@ -154,24 +132,22 @@
     (or (valid-levels level)
         (throw (ex-info (str "Invalid logging level: " level) {:level level})))))
 
-(comment (valid-level :info))
-
 (defn level>= [x y] (>= (long (scored-levels (valid-level x)))
                         (long (scored-levels (valid-level y)))))
 
-(comment (qb 10000 (level>= :info :debug)))
+#?(:clj (defn- sys-val [id]
+          (when-let [s (or (System/getProperty id)
+                           (System/getenv      id))]
+            (edn/read s))))
 
-#+clj
-(defn- sys-val [id]
-  (when-let [s (or (System/getProperty id)
-                   (System/getenv      id))]
-    (enc/read-edn s)))
-
-#+clj
-(def ^:private compile-time-level
-  (have [:or nil? valid-level]
-    (keyword (or (sys-val "TIMBRE_LEVEL")
-                 (sys-val "TIMBRE_LOG_LEVEL")))))
+#?(:clj
+   (def ^:private compile-time-level
+     (let [assertee (keyword (or (sys-val "TIMBRE_LEVEL")
+                                 (sys-val "TIMBRE_LOG_LEVEL")))]
+       (assert (or (nil? assertee)
+                   (valid-level assertee)))))
+   :cljs
+   (def ^:private compile-time-level nil))
 
 ;;;; ns filter
 
@@ -179,15 +155,15 @@
   "(fn [whitelist blacklist]) -> (fn [ns]) -> ?unfiltered-ns"
   (let [->re-pattern
         (fn [x]
-          (enc/cond!
-            (enc/re-pattern? x) x
+          (ut/cond!
+            (ut/re-pattern? x) x
             (string? x)
             (let [s (-> (str "^" x "$")
                         (str/replace "." "\\.")
                         (str/replace "*" "(.*)"))]
               (re-pattern s))))]
 
-    (enc/memoize_
+    (memoize
       (fn [whitelist blacklist]
         (let [whitelist* (mapv ->re-pattern whitelist)
               blacklist* (mapv ->re-pattern blacklist)
@@ -207,26 +183,27 @@
 
 (def ^:private ns-filter
   "(fn [whitelist blacklist ns]) -> ?unfiltered-ns"
-  (enc/memoize_
+  (memoize
     (fn [whitelist blacklist ns]
-      {:pre [(have? string? ns)]}
+      {:pre [(assert (string? ns))]}
       ((compile-ns-filters whitelist blacklist) ns))))
 
-(comment (qb 10000 (ns-filter ["foo.*"] ["foo.baz"] "foo.bar")))
+#?(:clj
+   (def ^:private compile-time-ns-filter
+     (let [whitelist (assert (or (nil? (sys-val "TIMBRE_NS_WHITELIST"))
+                                 (vector? (sys-val "TIMBRE_NS_WHITELIST"))))
+           blacklist (assert (or (nil? (sys-val "TIMBRE_NS_BLACKLIST"))
+                                 (vector? (sys-val "TIMBRE_NS_BLACKLIST"))))]
+       (when compile-time-level
+         (println (str "Compile-time (elision) Timbre level: " compile-time-level)))
+       (when whitelist
+         (println (str "Compile-time (elision) Timbre ns whitelist: " whitelist)))
+       (when blacklist
+         (println (str "Compile-time (elision) Timbre ns blacklist: " blacklist)))
 
-#+clj
-(def ^:private compile-time-ns-filter
-  (let [whitelist (have [:or nil? vector?] (sys-val "TIMBRE_NS_WHITELIST"))
-        blacklist (have [:or nil? vector?] (sys-val "TIMBRE_NS_BLACKLIST"))]
-
-    (when compile-time-level
-      (println (str "Compile-time (elision) Timbre level: " compile-time-level)))
-    (when whitelist
-      (println (str "Compile-time (elision) Timbre ns whitelist: " whitelist)))
-    (when blacklist
-      (println (str "Compile-time (elision) Timbre ns blacklist: " blacklist)))
-
-    (fn [ns] (ns-filter whitelist blacklist ns))))
+       (fn [ns] (ns-filter whitelist blacklist ns))))
+   :cljs
+   (def ^:private compile-time-ns-filter nil))
 
 ;;;; Utils
 
@@ -234,22 +211,15 @@
 
 (defn- ->delay [x] (if (delay? x) x (delay x)))
 
-(enc/compile-if (do enc/str-join true) ; Encore v2.29.1+ with transducers
-  (defn- str-join [xs]
-    (enc/str-join " "
-      (map
-        (fn [x]
-          (let [x (enc/nil->str x)] ; Undefined, nil -> "nil"
-            (cond
-              (record?          x) (pr-str x)
-              ;; (enc/lazy-seq? x) (pr-str x) ; Dubious?
-              :else x))))
-      xs))
-  (defn- str-join [xs] (enc/spaced-str-with-nils xs)))
-
-(comment
-  (defrecord MyRec [x])
-  (str-join ["foo" (MyRec. "foo")]))
+(defn- str-join [xs]
+  (ut/str-join " "
+               (map
+                (fn [x]
+                  (let [x (ut/nil->str x)] ; Undefined, nil -> "nil"
+                    (cond
+                      (record?          x) (pr-str x)
+                      :else x))))
+               xs))
 
 (defn default-data-hash-fn
   "Used for rate limiters, some appenders (e.g. Carmine), etc.
@@ -260,31 +230,23 @@
     (str (or ?hash-arg ; An explicit hash given as a0
              [?ns-str (or ?line @vargs_)]))))
 
-#+clj
-(enc/defonce* ^:private get-agent
-  (enc/memoize_ (fn [appender-id] (agent nil :error-mode :continue))))
+#?(:clj
+   (defonce ^:private get-agent
+     (memoize (fn [appender-id] (agent nil :error-mode :continue)))))
 
-(comment (get-agent :my-appender))
-
-(enc/defonce* ^:private get-rate-limiter
-  (enc/memoize_ (fn [appender-id specs] (enc/rate-limiter* specs))))
-
-(comment (def rf (get-rate-limiter :my-appender [[10 5000]])))
+(defonce ^:private get-rate-limiter
+  (memoize (fn [appender-id specs] (ut/rate-limiter* specs))))
 
 (defn- inherit-over [k appender config default]
   (or
-    (let [a (get appender k)] (when-not (enc/kw-identical? a :inherit) a))
+    (let [a (get appender k)] (when-not (ut/kw-identical? a :inherit) a))
     (get config k)
     default))
 
 (defn- inherit-into [k appender config default]
   (merge default
     (get config k)
-    (let [a (get appender k)] (when-not (enc/kw-identical? a :inherit) a))))
-
-(comment
-  (inherit-over :foo {:foo :inherit} {:foo :bar} nil)
-  (inherit-into :foo {:foo {:a :A :b :B :c :C}} {:foo {:a 1 :b 2 :c 3 :d 4}} nil))
+    (let [a (get appender k)] (when-not (ut/kw-identical? a :inherit) a))))
 
 ;;;; Internal logging core
 
@@ -308,57 +270,29 @@
        (ns-filter (:ns-whitelist config) (:ns-blacklist config) (or ?ns-str ""))
        true))))
 
-(comment
-  (set-level! :debug)
-  (log? :trace)
-  (with-level :trace (log? :trace))
-  (qb 10000 (log? :trace))       ; ~2.5ms
-  (qb 10000 (log? :trace "foo")) ; ~6ms
-  (qb 10000 (tracef "foo"))      ; ~7.5ms
-  (qb 10000 (when false "foo"))  ; ~0.5ms
-
-  ;;; Full benchmarks
-  (defmacro with-sole-appender [appender & body]
-    `(with-config (assoc *config* :appenders {:appender ~appender}) ~@body))
-
-  (with-sole-appender {:enabled? true :fn (fn [data] nil)}
-    (qb 10000 (info "foo"))) ; ~88ms ; Time to delays ready
-
-  (with-sole-appender {:enabled? true :fn (fn [data] ((:output-fn data) data))}
-    (qb 10000 (info "foo"))) ; ~218ms ; Time to output ready
-  )
-
 (defn- vargs->margs "Processes vargs to extract special a0s"
   [vargs a0-err?]
   (let [[v0 :as v] vargs
         [?err v]
-        (if (and a0-err? (enc/error? v0))
-          [v0 (enc/vnext v)]
+        (if (and a0-err? (ut/error? v0))
+          [v0 (ut/vnext v)]
           [nil v])
 
         [v0 :as v] v
         [?hash-arg v]
         (if (and (map? v0) (contains? v0 :timbre/hash))
-          [(:timbre/hash v0) (enc/vnext v)]
+          [(:timbre/hash v0) (ut/vnext v)]
           [nil v])]
 
     {:?err ?err :?hash-arg ?hash-arg :vargs v}))
 
-(comment
-  (vargs->margs [:a :b :c]                true)
-  (vargs->margs [(Exception. "ex") :b :c] true)
-
-  (infof {:timbre/hash :bar} "Hi %s" "steve")
-  (infof "Hi %s" "steve"))
-
 (defn -log! "Core low-level log fn. Implementation detail!"
   [config level ?ns-str ?file ?line msg-type ?err vargs_ ?base-data]
   (when (log? level ?ns-str config) ; Runtime check
-    (let [instant    (enc/now-dt)
-          ;; vargs_  (->delay vargs_) ; Should be safe w/o
+    (let [instant    (ut/now-dt)
           context    *context*
 
-          a0-err?    (enc/kw-identical? ?err :auto)
+          a0-err?    (ut/kw-identical? ?err :auto)
           margs_     (delay (vargs->margs @vargs_ a0-err?))
           ?err_      (delay (if a0-err? (:?err      @margs_) ?err))
           ?hash-arg_ (delay             (:?hash-arg @margs_))
@@ -379,17 +313,18 @@
              :?err_      ?err_
              :?hash-arg_ ?hash-arg_
              :vargs_     vargs_
-             #+clj :hostname_ #+clj (delay (get-hostname))
+             #?(:clj :hostname_) #?(:clj (delay (get-hostname)))
              :error-level? (#{:error :fatal} level)})
 
           msg-fn
           (fn [vargs_] ; For use *after* middleware, etc.
             (when-not (nil? msg-type)
-              (when-let [vargs (have [:or nil? vector?] @vargs_)]
+              (when-let [vargs (assert (or (nil? @vargs_)
+                                           (vector? @vargs_)))]
                 (case msg-type
                   :p (str-join vargs)
-                  :f (let [[fmt args] (enc/vsplit-first vargs)]
-                       (enc/format* fmt args))))))
+                  :f (let [[fmt args] (ut/vsplit-first vargs)]
+                       (ut/format* fmt args))))))
 
           ?data
           (reduce ; Apply middleware: data->?data
@@ -409,7 +344,7 @@
               {:?err_                 (->delay (:?err_      data))
                :?hash-arg_            (->delay (:?hash-arg_ data))
                :vargs_                (->delay (:vargs_     data))
-               #+clj :hostname_ #+clj (->delay (:hostname_  data))}))]
+               #?(:clj :hostname_) #?(:clj (->delay (:hostname_  data)))}))]
 
       (when-let [data ?data] ; Not filtered by middleware
         (reduce-kv
@@ -432,16 +367,19 @@
                         output-fn (inherit-over :output-fn appender config
                                     default-output-fn)
 
-                        #+clj timestamp_
-                        #+clj
-                        (delay
-                          (let [timestamp-opts (inherit-into :timestamp-opts
-                                                 appender config
-                                                 default-timestamp-opts)
-                                {:keys [pattern locale timezone]} timestamp-opts]
-                            (.format (enc/simple-date-format pattern
-                                       {:locale locale :timezone timezone})
-                              (:instant data))))
+                        #?(:clj timestamp_)
+                        #?(:clj
+                           (delay
+                            (let [timestamp-opts (inherit-into
+                                                  :timestamp-opts
+                                                  appender config
+                                                  default-timestamp-opts)
+                                  {:keys [pattern locale timezone]}
+                                  timestamp-opts]
+                              (.format (ut/simple-date-format
+                                        pattern
+                                        {:locale locale :timezone timezone})
+                                       (:instant data)))))
 
                         data ; Final data prep before going to appender
                         (merge data
@@ -452,19 +390,17 @@
                            :msg-fn       msg-fn
                            :output-fn    output-fn
                            :data-hash-fn data-hash-fn
-                           #+clj :timestamp_ #+clj timestamp_})]
+                           #?(:clj :timestamp_) #?(:clj timestamp_)})]
 
                     (if-not async?
                       (apfn data) ; Allow errors to throw
-                      #+cljs (apfn data)
-                      #+clj  (send-off (get-agent id) (fn [_] (apfn data)))))))))
+                      #?(:cljs (apfn data))
+                      #?(:clj (send-off
+                               (get-agent id)
+                               (fn [_] (apfn data))))))))))
           nil
           (:appenders config)))))
   nil)
-
-(comment
-  (-log! *config* :info nil nil nil :p :auto
-    (delay [(do (println "hi") :x) :y]) nil))
 
 (defmacro -with-elision
   "Implementation detail.
@@ -477,8 +413,6 @@
     (when (or (not (string? ns-str-form)) ; Not a compile-time ns-str const
               (compile-time-ns-filter ns-str-form))
       `(do ~@body))))
-
-(comment (-with-elision :info "ns" (println "foo")))
 
 (defn- fline [and-form] (:line (meta and-form)))
 
@@ -493,27 +427,21 @@
   Supports compile-time elision when compile-time const vals
   provided for `level` and/or `?ns-str`."
   [level msg-type args & [opts]]
-  (have sequential? args) ; To allow -> (delay [~@args])
   (let [{:keys [?ns-str] :or {?ns-str (str *ns*)}} opts]
     (-with-elision
-      level   ; level-form  (may/not be a compile-time kw const)
-      ?ns-str ; ns-str-form (may/not be a compile-time str const)
-      (let [{:keys [config ?err ?file ?line ?base-data]
-             :or   {config 'taoensso.timbre/*config*
-                    ?err   :auto ; => Extract as err-type a0
-                    ?file  *file*
-                    ;; NB waiting on CLJ-865:
-                    ?line  (fline &form)}} opts
+     level   ; level-form  (may/not be a compile-time kw const)
+     ?ns-str ; ns-str-form (may/not be a compile-time str const)
+     (let [{:keys [config ?err ?file ?line ?base-data]
+            :or   {config 'rplevy.betrim/*config*
+                   ?err   :auto ; => Extract as err-type a0
+                   ?file  #?(:clj *file*, :cljs nil)
+                   ;; NB waiting on CLJ-865:
+                   ?line  (fline &form)}} opts
 
-            ?file (when (not= ?file "NO_SOURCE_PATH") ?file)]
+           ?file (when (not= ?file "NO_SOURCE_PATH") ?file)]
 
-        `(-log! ~config ~level ~?ns-str ~?file ~?line ~msg-type ~?err
-           (delay [~@args]) ~?base-data)))))
-
-(comment
-  (log! :info :p ["foo"])
-  (macroexpand '(log! :info :p ["foo"]))
-  (macroexpand '(log! :info :p ["foo"] {:?line 42})))
+       `(-log! ~config ~level ~?ns-str ~?file ~?line ~msg-type ~?err
+               (delay [~@args]) ~?base-data)))))
 
 ;;;; Main public API-level stuff
 ;; TODO Have a bunch of cruft here trying to work around CLJ-865 to some extent
@@ -540,20 +468,15 @@
 (defmacro fatalf             [& args] `(log! :fatal  :f ~args ~{:?line (fline &form)}))
 (defmacro reportf            [& args] `(log! :report :f ~args ~{:?line (fline &form)}))
 
-(comment
-  (infof "hello %s" "world")
-  (infof (Exception.) "hello %s" "world")
-  (infof (Exception.)))
-
 (defmacro -log-errors [?line & body]
-  `(let [[?result# ?error#] (enc/catch-errors ~@body)]
+  `(let [[?result# ?error#] (ut/catch-errors ~@body)]
      (when-let [e# ?error#]
        ;; (error e#) ; CLJ-865
        (log! :error :p [e#] ~{:?line ?line}))
      ?result#))
 
 (defmacro -log-and-rethrow-errors [?line & body]
-  `(let [[?result# ?error#] (enc/catch-errors ~@body)]
+  `(let [[?result# ?error#] (ut/catch-errors ~@body)]
      (when-let [e# ?error#]
        ;; (error e#) ; CLJ-865
        (log! :error :p [e#] ~{:?line ?line})
@@ -566,25 +489,19 @@
 (defmacro log-and-rethrow-errors [& body] `(-log-and-rethrow-errors ~(fline &form) ~@body))
 (defmacro logged-future          [& body] `(-logged-future          ~(fline &form) ~@body))
 
-#+clj
-(defn handle-uncaught-jvm-exceptions!
-  "Sets JVM-global DefaultUncaughtExceptionHandler."
-  [& [handler]]
-  (let [handler
-        (or handler
-          (fn [throwable ^Thread thread]
-            (errorf throwable "Uncaught exception on thread: %s"
-              (.getName thread))))]
-
-    (Thread/setDefaultUncaughtExceptionHandler
-      (reify Thread$UncaughtExceptionHandler
-        (uncaughtException [this thread throwable] (handler throwable thread))))))
-
-(comment
-  (log-errors             (/ 0))
-  (log-and-rethrow-errors (/ 0))
-  (logged-future          (/ 0))
-  (handle-uncaught-jvm-exceptions!))
+#?(:clj
+   (defn handle-uncaught-jvm-exceptions!
+    "Sets JVM-global DefaultUncaughtExceptionHandler."
+    [& [handler]]
+    (let [handler
+          (or handler
+              (fn [throwable ^Thread thread]
+                (errorf throwable "Uncaught exception on thread: %s"
+                        (.getName thread))))]
+      (Thread/setDefaultUncaughtExceptionHandler
+       (reify Thread$UncaughtExceptionHandler
+         (uncaughtException [this thread throwable]
+           (handler throwable thread)))))))
 
 (defmacro -spy [?line config level name expr]
   `(-log-and-rethrow-errors ~?line
@@ -604,88 +521,52 @@
   ([       level name expr] `(-spy ~(fline &form) *config* ~level  ~name ~expr))
   ([config level name expr] `(-spy ~(fline &form) ~config  ~level  ~name ~expr)))
 
-(defmacro get-env [] `(enc/get-env))
-(comment ((fn foo [x y] (get-env)) 5 10))
-
-#+clj
-(defn refer-timbre
-  "Shorthand for:
-  (require '[taoensso.timbre :as timbre
-             :refer (log  trace  debug  info  warn  error  fatal  report
-                     logf tracef debugf infof warnf errorf fatalf reportf
-                     spy get-env log-env)])
-  (require '[taoensso.timbre.profiling :as profiling
-             :refer (pspy pspy* profile defnp p p*)])"
-  []
-  (require '[taoensso.timbre :as timbre
-             :refer (log  trace  debug  info  warn  error  fatal  report
-                     logf tracef debugf infof warnf errorf fatalf reportf
-                     spy get-env log-env)])
-  (require '[taoensso.timbre.profiling :as profiling
-             :refer (pspy pspy* profile defnp p p*)]))
+(defmacro get-env [] `(ut/get-env))
 
 ;;;; Misc public utils
 
-#+clj
-(defn color-str [color & xs]
-  (let [ansi-color #(format "\u001b[%sm"
-                      (case % :reset  "0"  :black  "30" :red   "31"
-                              :green  "32" :yellow "33" :blue  "34"
-                              :purple "35" :cyan   "36" :white "37"
-                              "0"))]
-    (str (ansi-color color) (apply str xs) (ansi-color :reset))))
+#?(:clj
+   (defn color-str [color & xs]
+     (let [ansi-color
+           #(format "\u001b[%sm"
+                    (case % :reset  "0"  :black  "30" :red   "31"
+                          :green  "32" :yellow "33" :blue  "34"
+                          :purple "35" :cyan   "36" :white "37"
+                          "0"))]
+       (str (ansi-color color) (apply str xs) (ansi-color :reset)))))
 
-#+clj (def default-out (java.io.OutputStreamWriter. System/out))
-#+clj (def default-err (java.io.PrintWriter.        System/err))
+#?(:clj (def default-out (java.io.OutputStreamWriter. System/out)))
+#?(:clj (def default-err (java.io.PrintWriter.        System/err)))
 (defmacro with-default-outs [& body]
   `(binding [*out* default-out, *err* default-err] ~@body))
 
-#+clj
-(def get-hostname
-  (enc/memoize* (enc/ms :mins 1)
-    (fn []
-      ;; Android doesn't like this on the main thread. Would use a `future` but
-      ;; that starts the Clojure agent threadpool which can slow application
-      ;; shutdown w/o a `(shutdown-agents)` call
-      (let [executor (java.util.concurrent.Executors/newSingleThreadExecutor)
-            ^java.util.concurrent.Callable f
-            (fn []
-              (try
-                (.. java.net.InetAddress getLocalHost getHostName)
-                (catch java.net.UnknownHostException _ "UnknownHost")
-                (finally (.shutdown executor))))]
-
-        (deref (.submit executor f) 5000 "UnknownHost")))))
-
-(comment (get-hostname))
+#?(:clj
+   (def get-hostname
+     (memo/ttl
+      (fn []
+        ;; Android doesn't like this on the main thread. Would use a `future` but
+        ;; that starts the Clojure agent threadpool which can slow application
+        ;; shutdown w/o a `(shutdown-agents)` call
+        (let [executor (java.util.concurrent.Executors/newSingleThreadExecutor)
+              ^java.util.concurrent.Callable f
+              (fn []
+                (try
+                  (.. java.net.InetAddress getLocalHost getHostName)
+                  (catch java.net.UnknownHostException _ "UnknownHost")
+                  (finally (.shutdown executor))))]
+          (deref (.submit executor f) 5000 "UnknownHost")))
+      :ttl/threshold 60000)))
 
 (defn stacktrace [err & [{:keys [stacktrace-fonts] :as opts}]]
-  #+cljs (str err) ; TODO Alternatives?
-  #+clj
-  (let [stacktrace-fonts (if (and (nil? stacktrace-fonts)
-                                  (contains? opts :stacktrace-fonts))
-                           {} stacktrace-fonts)]
-    (if-let [fonts stacktrace-fonts]
-      (binding [aviso-ex/*fonts* fonts] (aviso-ex/format-exception err))
-      (aviso-ex/format-exception err))))
-
-(comment (stacktrace (Exception. "Boo") {:stacktrace-fonts nil}))
+  #?(:cljs (str err)) ; TODO Alternatives?
+  #?(:clj (let [stacktrace-fonts (if (and (nil? stacktrace-fonts)
+                                          (contains? opts :stacktrace-fonts))
+                                   {} stacktrace-fonts)]
+            (if-let [fonts stacktrace-fonts]
+              (binding [aviso-ex/*fonts* fonts] (aviso-ex/format-exception err))
+              (aviso-ex/format-exception err)))))
 
 (defmacro sometimes "Handy for sampled logging, etc."
   [probability & body]
    `(do (assert (<= 0 ~probability 1) "Probability: 0 <= p <= 1")
         (when (< (rand) ~probability) ~@body)))
-
-;;;; Deprecated
-
-#+cljs (def console-?appender core-appenders/console-appender)
-(defn logging-enabled? [level compile-time-ns] (log? level (str compile-time-ns)))
-(defn str-println      [& xs] (str-join xs))
-(defmacro with-log-level      [level  & body] `(with-level  ~level  ~@body))
-(defmacro with-logging-config [config & body] `(with-config ~config ~@body))
-(defmacro logp [& sigs] `(log ~@sigs))
-(defmacro log-env
-  ([                 ] `(log-env :debug))
-  ([       level     ] `(log-env ~level "&env"))
-  ([       level name] `(log-env *config* ~level ~name))
-  ([config level name] `(log* ~config ~level ~name "=>" (get-env))))
